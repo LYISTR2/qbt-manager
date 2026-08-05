@@ -1,6 +1,6 @@
 # qBittorrent Manager
 
-Linux 一键管理脚本：安装、密码提取、修改密码、卸载。
+Linux 一键脚本：安装、密码提取、修改密码、卸载，支持远程一条命令直接管理。
 
 ## 功能
 
@@ -15,6 +15,26 @@ Linux 一键管理脚本：安装、密码提取、修改密码、卸载。
 ```bash
 curl -sSL https://raw.githubusercontent.com/LYISTR2/qbt-manager/main/install.sh | sudo bash
 ```
+
+## 远程快捷管理
+
+无需登录服务器，一条命令直接操作（自动下载最新脚本）：
+
+```bash
+# 查看密码
+curl -sSL https://raw.githubusercontent.com/LYISTR2/qbt-manager/main/install.sh | sudo bash -s password
+
+# 修改密码
+curl -sSL https://raw.githubusercontent.com/LYISTR2/qbt-manager/main/install.sh | sudo bash -s change-pass
+
+# 查看状态
+curl -sSL https://raw.githubusercontent.com/LYISTR2/qbt-manager/main/install.sh | sudo bash -s status
+
+# 卸载
+curl -sSL https://raw.githubusercontent.com/LYISTR2/qbt-manager/main/install.sh | sudo bash -s uninstall
+```
+
+## 本机命令
 
 安装后 `qbt-manager` 命令可用：
 
