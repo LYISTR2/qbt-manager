@@ -10,7 +10,23 @@ Linux 一键管理脚本：安装、密码提取、修改密码、卸载。
 - **卸载** — 停止服务、删 systemd、删二进制，可选删配置和下载数据
 - **状态查看** — 版本、服务运行状态、端口、密码文件
 
-## 用法
+## 一键安装
+
+```bash
+curl -sSL https://raw.githubusercontent.com/LYISTR2/qbt-manager/main/install.sh | sudo bash
+```
+
+安装后 `qbt-manager` 命令可用：
+
+```bash
+qbt-manager              # 交互菜单
+qbt-manager password     # 查看密码
+qbt-manager change-pass  # 改密码
+qbt-manager status       # 查看状态
+qbt-manager uninstall    # 卸载
+```
+
+## 手动使用
 
 ```bash
 sudo bash qbt-manager.sh            # 交互菜单
