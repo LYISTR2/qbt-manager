@@ -214,11 +214,54 @@ SERVICEEOF
         sed -i 's/WebUI\\Port=.*/WebUI\\Port=8080/' "$QB_CONF" 2>/dev/null || true
     fi
 
+    # 持久化密码到配置文件 (临时密码仅本次会话有效，重启后失效)
+    if [[ -n "$password" ]]; then
+        info "持久化密码到配置文件..."
+        edit_config_password "$password"
+        ok "密码已写入配置，重启后仍有效"
+    fi
+
+    # 配置公网访问: 监听所有网卡 + 关闭 HostHeader/CSRF 校验
+    if [[ -f "$QB_CONF" ]]; then
+        # 确保有 WebUI 段配置
+        grep -q 'WebUI\\Address' "$QB_CONF" || echo 'WebUI\Address=0.0.0.0' >> "$QB_CONF"
+        sed -i 's/WebUI\\Address=.*/WebUI\\Address=0.0.0.0/' "$QB_CONF"
+        grep -q 'WebUI\\HostHeaderValidation' "$QB_CONF" || echo 'WebUI\HostHeaderValidation=false' >> "$QB_CONF"
+        sed -i 's/WebUI\\HostHeaderValidation=.*/WebUI\\HostHeaderValidation=false/' "$QB_CONF"
+        grep -q 'WebUI\\CSRFProtection' "$QB_CONF" || echo 'WebUI\CSRFProtection=false' >> "$QB_CONF"
+        sed -i 's/WebUI\\CSRFProtection=.*/WebUI\\CSRFProtection=false/' "$QB_CONF"
+        ok "WebUI 已配置公网访问 (0.0.0.0:$WEBUI_PORT)"
+    fi
+
     ok "安装完成！"
+
+    # 启动服务并开启开机自启
     echo ""
-    info "启动服务: qbittorrent-nox"
-    info "开机自启: systemctl enable qbittorrent-nox"
+    if command -v systemctl &>/dev/null; then
+        info "启动服务并开启开机自启..."
+        systemctl daemon-reload 2>/dev/null || true
+        systemctl enable qbittorrent-nox 2>&1 | grep -v "Created symlink" || true
+        systemctl start qbittorrent-nox 2>/dev/null || true
+        sleep 3
+        if systemctl is-active --quiet qbittorrent-nox; then
+            ok "服务运行中 (开机自启已开启)"
+        else
+            warn "服务启动失败，检查: journalctl -u qbittorrent-nox"
+        fi
+    else
+        info "无 systemd，手动启动: nohup $QB_BIN --daemon"
+    fi
+
+    # 验证监听地址
+    if ss -tlnp 2>/dev/null | grep -q ":$WEBUI_PORT"; then
+        ok "WebUI 监听: 0.0.0.0:$WEBUI_PORT (公网可访问)"
+    else
+        warn "未检测到 $WEBUI_PORT 监听，请检查防火墙/安全组"
+    fi
+
+    echo ""
     info "配置文件: $QB_CONF"
+    info "开机自启: systemctl enable qbittorrent-nox (已自动执行)"
 }
 
 # ============================================================
@@ -338,7 +381,7 @@ CONFEOF
 
     # qBittorrent 5.x 密码格式: @ByteArray(base64(salt):base64(hash))
     # PBKDF2-HMAC-SHA512, 100000 次迭代, salt 12字节, hash 64字节, 冒号分隔
-    # (4.x 及以下是 salt+hash 拼接后整体 base64, 此处兼容 5.x)
+    # (密码必须放在 [Preferences] 段下, 否则 qBittorrent 5.x 不读取)
     local hashed_pass
     hashed_pass=$(python3 -c "
 import base64, hashlib, os
@@ -350,19 +393,47 @@ b64_hash = base64.b64encode(dk).decode('ascii')
 print('@ByteArray({}:{})'.format(b64_salt, b64_hash))
 ")
 
-    # 修改配置文件
-    if grep -q "WebUI\\Password_PBKDF2" "$QB_CONF" 2>/dev/null; then
-        # 有 PBKDF2 字段，清空它让 qBittorrent 重新生成
-        sed -i '/WebUI\\Password_PBKDF2/d' "$QB_CONF"
-    fi
+    # 用 Python 处理 INI 段插入, 确保 WebUI 配置在 [Preferences] 段下
+    python3 -c "
+import sys
+passwd = '$hashed_pass'
+conf_path = '$QB_CONF'
 
-    # 删除旧密码相关字段
-    sed -i '/WebUI\\Password[^_]/d' "$QB_CONF" 2>/dev/null || true
-    sed -i '/WebUI\\Password_PBKDF2/d' "$QB_CONF" 2>/dev/null || true
+with open(conf_path, 'r') as f:
+    lines = f.readlines()
 
-    # 写入新密码 (PBKDF2 格式)
-    echo "" >> "$QB_CONF"
-    echo "WebUI\\Password_PBKDF2=$hashed_pass" >> "$QB_CONF"
+# 删除所有 WebUI\Password_PBKDF2 行
+lines = [l for l in lines if 'Password_PBKDF2' not in l]
+
+# 找到 [Preferences] 段位置
+pref_idx = -1
+for i, line in enumerate(lines):
+    if line.strip().startswith('[Preferences]'):
+        pref_idx = i
+        break
+
+# 在 [Preferences] 段末尾插入新行 (找到段内最后一个非空行或段结尾)
+if pref_idx >= 0:
+    # 找到 [Preferences] 段的结束位置 (下一个 [ 或文件末尾)
+    insert_at = pref_idx + 1
+    while insert_at < len(lines):
+        line = lines[insert_at].strip()
+        if line.startswith('['):
+            break
+        if line:  # 非空行
+            insert_at += 1
+        else:
+            insert_at += 1
+    # 插入到段末尾 (如果有空行或回车保留)
+    lines.insert(insert_at, 'WebUI\\\\Password_PBKDF2=' + passwd + '\\n')
+else:
+    # 没有 [Preferences] 段, 追加到文件末尾
+    lines.append('\\n[Preferences]\\n')
+    lines.append('WebUI\\\\Password_PBKDF2=' + passwd + '\\n')
+
+with open(conf_path, 'w') as f:
+    f.writelines(lines)
+" 2>&1
 
     ok "配置文件已更新"
 }
